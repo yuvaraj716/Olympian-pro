@@ -1,166 +1,186 @@
 import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from datetime import datetime
 
-# ---------------- PAGE CONFIG (MUST BE FIRST) ----------------
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="OLYMPIAN PRO 2026",
+    page_icon="🏅",
     layout="wide",
-    page_icon="🏅"
+    initial_sidebar_state="expanded"
 )
 
-# ---------------- OPTIONAL AI (SAFE IMPORT) ----------------
+# ---------------- AI SAFE INIT ----------------
 AI_ENABLED = True
-
 try:
     import google.generativeai as genai
-    GENAI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-    if GENAI_API_KEY:
-        genai.configure(api_key=GENAI_API_KEY)
+    API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+    if API_KEY:
+        genai.configure(api_key=API_KEY)
         model = genai.GenerativeModel("gemini-2.0-flash")
     else:
         AI_ENABLED = False
-except:
+except Exception:
     AI_ENABLED = False
 
-# ---------------- CUSTOM STYLING ----------------
+# ---------------- SESSION STATE ----------------
+st.session_state.setdefault("workout_history", [])
+st.session_state.setdefault("chat_history", [])
+
+# ---------------- STYLING ----------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;700&display=swap');
 
-.stApp { background-color: #05070A; color: #E0E0E0; }
-h1, h2, h3 { font-family: 'Orbitron', sans-serif; color: #FFD700; }
-
-.workout-card {
-    background: rgba(255,255,255,0.03);
-    border-radius: 15px;
-    padding: 20px;
-    border-left: 4px solid #FFD700;
-    margin-bottom: 15px;
+.stApp {
+    background: #0f172a;
+    color: #f8fafc;
 }
+h1,h2,h3 { font-family: Orbitron; letter-spacing:2px; }
+.gold { color:#fbbf24; text-shadow:0 0 15px rgba(251,191,36,.4); }
 
-.stat-box {
-    text-align: center;
-    padding: 20px;
-    background: #0c0c0c;
-    border-radius: 15px;
-    border: 1px solid #FFD700;
-}
-
-.variant-tag {
-    background: #FFD700;
-    color: black;
-    padding: 3px 10px;
-    border-radius: 5px;
-    font-size: 0.75rem;
-    font-weight: bold;
-}
-
-.level-badge {
-    color: #FFD700;
-    border: 1px solid #FFD700;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.8rem;
+.card {
+    background: rgba(30,41,59,.75);
+    border-radius: 18px;
+    padding: 22px;
+    border: 1px solid rgba(251,191,36,.2);
+    margin-bottom: 18px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- WORKOUT DATA ----------------
-WORKOUT_DATA = {
+# ---------------- WORKOUT DB ----------------
+WORKOUT_DB = {
     "Chest": {
-        "Bodyweight": ["Standard Pushups", "Diamond Pushups", "Wide Pushups", "Dips"],
-        "Dumbbell": ["Flat DB Press", "Incline DB Press", "DB Flys", "Pullover"],
-        "Barbell": ["Bench Press", "Incline Press", "Close Grip Press", "Guillotine Press"]
+        "Bodyweight": ["Pushups", "Diamond Pushups"],
+        "Dumbbell": ["DB Bench", "DB Fly"],
+        "Barbell": ["Bench Press", "Incline Press"]
     },
     "Back": {
-        "Bodyweight": ["Pull-ups", "Chin-ups", "Inverted Rows", "Superman Holds"],
-        "Dumbbell": ["Single Arm Rows", "Renegade Rows", "Seal Rows", "DB Deadlift"],
-        "Barbell": ["Deadlift", "Bent Over Rows", "Pendlay Rows", "T-Bar Rows"]
-    },
-    "Shoulders": {
-        "Bodyweight": ["Pike Pushups", "Wall Walks", "Handstand Hold", "Hindu Pushups"],
-        "Dumbbell": ["Shoulder Press", "Lateral Raises", "Front Raises", "Reverse Flys"],
-        "Barbell": ["Overhead Press", "Push Press", "Upright Rows", "Shrugs"]
+        "Bodyweight": ["Pullups", "Inverted Rows"],
+        "Dumbbell": ["DB Rows", "Renegade Rows"],
+        "Barbell": ["Deadlift", "Barbell Row"]
     },
     "Legs": {
-        "Bodyweight": ["Air Squats", "Bulgarian Squats", "Lunges", "Jump Squats"],
-        "Dumbbell": ["Goblet Squats", "RDL", "Step-ups", "Weighted Lunges"],
-        "Barbell": ["Back Squat", "Front Squat", "RDL", "Hip Thrust"]
+        "Bodyweight": ["Squats", "Lunges"],
+        "Dumbbell": ["Goblet Squats", "DB RDL"],
+        "Barbell": ["Back Squat", "Front Squat"]
     },
-    "Arms": {
-        "Bodyweight": ["Bench Dips", "Chin-ups", "Cobra Pushups", "Towel Curls"],
-        "Dumbbell": ["Alt Curls", "Hammer Curls", "Overhead Ext", "Kickbacks"],
-        "Barbell": ["Barbell Curls", "EZ Curls", "Skull Crushers", "Close Grip Bench"]
+    "Shoulders": {
+        "Bodyweight": ["Pike Pushups"],
+        "Dumbbell": ["Arnold Press", "Laterals"],
+        "Barbell": ["Overhead Press"]
     }
-}
-
-LEVEL_CONFIG = {
-    "Beginner": "3 Sets • 12–15 Reps • Focus on Form",
-    "Intermediate": "4 Sets • 8–12 Reps • Hypertrophy",
-    "Advanced": "5 Sets • 5–8 Reps • Strength"
 }
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.title("ATHLETE PROFILE")
-    weight = st.number_input("Weight (kg)", 40, 200, 75)
-    level = st.select_slider("Select Rank", ["Beginner", "Intermediate", "Advanced"])
+    st.markdown("<h2 class='gold'>BIOMETRIC HUB</h2>", unsafe_allow_html=True)
 
-    st.divider()
-    st.subheader("🤖 AI COACH")
+    height = st.number_input("Height (cm)", 140, 220, 175)
+    weight = st.number_input("Weight (kg)", 35.0, 200.0, 75.0)
 
-    user_query = st.text_input("Ask about nutrition or form")
+    bmi = weight / ((height / 100) ** 2)
+    st.metric("BMI", f"{bmi:.1f}")
 
-    if user_query:
-        if AI_ENABLED:
-            with st.spinner("Analyzing..."):
-                response = model.generate_content(
-                    f"You are an elite strength coach. Answer briefly for a {level} athlete: {user_query}"
-                )
-                st.info(response.text)
-        else:
-            st.warning("AI disabled. Add GEMINI_API_KEY to Streamlit secrets.")
+    goal = st.selectbox("Training Goal", ["Fat Loss", "Muscle Gain", "Strength", "Endurance"])
+
+    if st.button("RESET ALL DATA"):
+        st.session_state.workout_history.clear()
+        st.session_state.chat_history.clear()
+        st.rerun()
 
 # ---------------- MAIN UI ----------------
-st.markdown("<h1>OLYMPIAN <span style='color:white'>PRO 2026</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='gold' style='text-align:center'>OLYMPIAN PRO 2026</h1>", unsafe_allow_html=True)
 
-c1, c2 = st.columns(2)
-with c1:
-    target = st.selectbox("Target Muscle Group", WORKOUT_DATA.keys())
-with c2:
-    equip = st.radio("Equipment", ["Bodyweight", "Dumbbell", "Barbell"], horizontal=True)
+tab_train, tab_stats, tab_ai = st.tabs(["🏋️ TRAINING", "📊 ANALYTICS", "🧠 AI COACH"])
 
-st.write("---")
+# ---------------- TRAINING TAB ----------------
+with tab_train:
+    col1, col2 = st.columns([1,1.3])
 
-intensity = LEVEL_CONFIG[level]
-exercises = WORKOUT_DATA[target][equip]
+    with col1:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        muscle = st.selectbox("Muscle Group", WORKOUT_DB.keys())
+        equip = st.radio("Equipment", ["Bodyweight","Dumbbell","Barbell"], horizontal=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-left, right = st.columns([1, 1])
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        for ex in WORKOUT_DB[muscle][equip]:
+            with st.expander(ex):
+                s = st.number_input("Sets", 0, 10, key=f"s{ex}")
+                r = st.number_input("Reps", 0, 50, key=f"r{ex}")
+                w = st.number_input("Weight", 0, 500, key=f"w{ex}")
+                if st.button(f"LOG {ex}", key=f"log{ex}"):
+                    vol = s * r * w
+                    st.session_state.workout_history.append({
+                        "time": datetime.now().strftime("%H:%M"),
+                        "exercise": ex,
+                        "volume": vol
+                    })
+                    st.toast(f"{ex} logged")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-with left:
-    st.markdown(f"""
-    <div class='stat-box'>
-        <span class='level-badge'>{level.upper()}</span>
-        <h2>{equip.upper()} PROTOCOL</h2>
-        <p>{intensity}</p>
-    </div>
-    """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        if not st.session_state.workout_history:
+            st.info("No workout data logged yet.")
+        else:
+            for h in st.session_state.workout_history[-5:][::-1]:
+                st.write(f"🕒 {h['time']} | {h['exercise']} | {h['volume']} kg")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-with right:
-    st.subheader("Training Sequence")
-    for ex in exercises:
-        st.markdown(f"""
-        <div class='workout-card'>
-            <span class='variant-tag'>{equip}</span><br>
-            <b>{ex}</b><br>
-            <small>{intensity}</small>
-        </div>
-        """, unsafe_allow_html=True)
+# ---------------- ANALYTICS TAB ----------------
+with tab_stats:
+    if not st.session_state.workout_history:
+        st.warning("Log workouts to see analytics.")
+    else:
+        df = pd.DataFrame(st.session_state.workout_history)
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            y=df["volume"],
+            mode="lines+markers",
+            line=dict(color="#fbbf24", width=4)
+        ))
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#cbd5f5",
+            height=320
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.metric("Total Volume", int(df["volume"].sum()))
+        st.metric("Max Set", int(df["volume"].max()))
+
+# ---------------- AI TAB ----------------
+with tab_ai:
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.caption(f"BMI {bmi:.1f} | Goal: {goal}")
+
+    q = st.chat_input("Ask about training, nutrition, recovery...")
+    if q:
+        st.chat_message("user").write(q)
+        if AI_ENABLED:
+            try:
+                with st.spinner("Thinking like an Olympian..."):
+                    res = model.generate_content(
+                        f"Athlete BMI {bmi:.1f}, Goal {goal}. Answer professionally: {q}"
+                    )
+                st.chat_message("assistant").write(res.text)
+            except Exception:
+                st.error("AI temporarily unavailable.")
+        else:
+            st.warning("AI disabled. Add GEMINI_API_KEY.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------- FOOTER ----------------
 st.markdown("""
 <hr>
-<center style='color:#555;font-size:0.8rem'>
-<b>OLYMPIAN AI LABS © 2026</b><br>
-Precision Engineering for Human Performance
+<center style='color:#64748b'>
+OLYMPIAN PRO 2026 • VERSION 4.2.1 • BUILT FOR ELITE PERFORMANCE
 </center>
 """, unsafe_allow_html=True)
